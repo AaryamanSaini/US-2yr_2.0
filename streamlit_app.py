@@ -15,10 +15,10 @@ def parse_price(p):
         match = re.match(r'(\d+)-(\d+)([¼½¾]?)', p.strip())
         if match:
             whole, thirtyseconds, frac = match.groups()
-            val = int(whole) + int(thirtyseconds)/32
-            if frac == '¼': val += 1/128
-            elif frac == '½': val += 1/64
-            elif frac == '¾': val += 3/128
+            val = int(whole) + int(thirtyseconds) / 32
+            if frac == '¼': val += 1 / 128
+            elif frac == '½': val += 1 / 64
+            elif frac == '¾': val += 3 / 128
             return val
     return np.nan
 
@@ -30,21 +30,34 @@ def load_data(path):
     if df.columns[0].startswith("ï»¿"):
         df.rename(columns={df.columns[0]: df.columns[0].replace("ï»¿", "")}, inplace=True)
 
+    # Identify the price column dynamically
     price_col = [c for c in df.columns if "Lst" in c][0]
+
+    # Parse date and convert price
     df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
     df['Price'] = df[price_col].apply(parse_price)
     df['Day'] = df['Date'].dt.date
 
-    # Handle time safely
-    if 'Time' in df.columns and df['Time'].dtype == object:
-        df['Time'] = pd.to_datetime(df['Time'], errors='coerce').dt.time
+    # --- FIX: Parse Time column cleanly even if read as string or number ---
+    if 'Time' in df.columns:
+        df['Time'] = (
+            df['Time']
+            .astype(str)
+            .str.extract(r'(\d{1,2}:\d{2}(:\d{2})?)')[0]  # match hh:mm[:ss]
+        )
+        df['Time'] = pd.to_datetime(df['Time'], format='%H:%M:%S', errors='coerce').dt.time
     else:
         df['Time'] = df['Date'].dt.time
 
-    df = df.dropna(subset=['Time'])
+    # Clean data
+    df = df.dropna(subset=['Time', 'Price'])
     df['Rel_Yield'] = df.groupby('Day')['Price'].transform(lambda x: x - x.iloc[0])
     df = df.drop_duplicates(subset=['Day', 'Time'], keep='last')
+
+    # Sort chronologically
+    df = df.sort_values(by=['Day', 'Time'])
     return df
+
 
 # --- Load datasets ---
 data_files = {
@@ -58,6 +71,7 @@ st.sidebar.header("Select Bond Contract")
 selected_label = st.sidebar.radio("Choose maturity:", list(data_files.keys()))
 selected_path = data_files[selected_label]
 
+# ✅ Load the selected dataset
 df = load_data(selected_path)
 
 # --- Calendar-style day selection ---
