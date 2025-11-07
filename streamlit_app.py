@@ -61,10 +61,11 @@ def load_data(path):
 
 # --- Load datasets ---
 data_files = {
-    "2 Year (TUZ5)": "Copy of TUZ5 - 5M5D.csv",
-    "5 Year (FVZ5)": "5year.csv",
-    "10 Year (TYZ5)": "10year.csv"
+    "2 Year (TUZ5)": "tuz5.csv",
+    "5 Year (FVZ5)": "fvz5.csv",
+    "10 Year (TYZ5)": "tyz5.csv"
 }
+
 
 # --- Sidebar selector ---
 st.sidebar.header("Select Bond Contract")
@@ -73,6 +74,10 @@ selected_path = data_files[selected_label]
 
 # ✅ Load the selected dataset
 df = load_data(selected_path)
+st.caption(f"Loaded file: {selected_path}")
+st.write("Sample data preview:")
+st.dataframe(df.head(5))
+
 
 # --- Calendar-style day selection ---
 all_days = sorted(df['Day'].unique())
