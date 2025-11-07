@@ -24,8 +24,12 @@ def parse_price(p):
 
 # --- Function to load and process each CSV ---
 def load_data(path):
-    df = pd.read_csv(path)
+    # Safe read with encoding and BOM fix (important for Streamlit Cloud)
+    df = pd.read_csv(path, encoding='utf-8-sig', on_bad_lines='skip')
     df.columns = df.columns.str.strip()
+    if df.columns[0].startswith("ï»¿"):
+        df.rename(columns={df.columns[0]: df.columns[0].replace("ï»¿", "")}, inplace=True)
+
     price_col = [c for c in df.columns if "Lst" in c][0]
     df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
     df['Price'] = df[price_col].apply(parse_price)
