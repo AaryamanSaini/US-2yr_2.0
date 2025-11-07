@@ -4,6 +4,7 @@ import numpy as np
 import plotly.graph_objects as go
 import re
 from datetime import datetime
+import os
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Bond Futures Dashboard", layout="wide")
@@ -22,69 +23,82 @@ def parse_price(p):
             return val
     return np.nan
 
-# --- Function to load and process each CSV ---
+
+# --- Function to load and process each CSV safely ---
 def load_data(path):
-    # Safe read with encoding and BOM fix (important for Streamlit Cloud)
-    df = pd.read_csv(path, encoding='utf-8-sig', on_bad_lines='skip')
+    st.write(f"📂 Loading file: `{os.getcwd()}/{path}`")
+
+    if not os.path.exists(path):
+        st.error(f"❌ File not found: {path}")
+        return pd.DataFrame()
+
+    encodings = ['utf-8-sig', 'utf-8', 'ISO-8859-1']
+    for enc in encodings:
+        try:
+            df = pd.read_csv(path, encoding=enc, on_bad_lines='skip')
+            break
+        except Exception as e:
+            st.write(f"⚠️ Failed with {enc}: {e}")
+            continue
+
+    # Clean up columns (remove BOM, spaces)
     df.columns = df.columns.str.strip()
     if df.columns[0].startswith("ï»¿"):
         df.rename(columns={df.columns[0]: df.columns[0].replace("ï»¿", "")}, inplace=True)
 
-    # Identify the price column dynamically
-    price_col = [c for c in df.columns if "Lst" in c][0]
+    # Identify price column
+    price_col = next((c for c in df.columns if "Lst" in c or "Last" in c), None)
+    if price_col is None:
+        st.error(f"❌ Could not find price column in {path}. Columns: {list(df.columns)}")
+        return pd.DataFrame()
 
-    # Parse date and convert price
-    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
-    df['Price'] = df[price_col].apply(parse_price)
+    # Parse dates and time
+    df['Date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
     df['Day'] = df['Date'].dt.date
 
-    # --- FIX: Parse Time column cleanly even if read as string or number ---
     if 'Time' in df.columns:
-        df['Time'] = (
-            df['Time']
-            .astype(str)
-            .str.extract(r'(\d{1,2}:\d{2}(:\d{2})?)')[0]  # match hh:mm[:ss]
-        )
+        df['Time'] = df['Time'].astype(str).str.extract(r'(\d{1,2}:\d{2}(:\d{2})?)')[0]
         df['Time'] = pd.to_datetime(df['Time'], format='%H:%M:%S', errors='coerce').dt.time
     else:
         df['Time'] = df['Date'].dt.time
 
-    # Clean data
-    df = df.dropna(subset=['Time', 'Price'])
-    df['Rel_Yield'] = df.groupby('Day')['Price'].transform(lambda x: x - x.iloc[0])
-    df = df.drop_duplicates(subset=['Day', 'Time'], keep='last')
-
-    # Sort chronologically
+    # Convert prices and compute relative yield
+    df['Price'] = df[price_col].apply(parse_price)
+    df = df.dropna(subset=['Price', 'Time']).copy()
     df = df.sort_values(by=['Day', 'Time'])
+
+    df['Rel_Yield'] = df.groupby('Day')['Price'].transform(lambda x: x - x.iloc[0])
+
+    # Quick preview to confirm loading
+    with st.sidebar.expander(f"Preview: {os.path.basename(path)}", expanded=False):
+        st.dataframe(df.head(5), width='stretch')
+
     return df
 
 
 # --- Load datasets ---
 data_files = {
-    "2 Year (TUZ5)": "tuz5.csv",
-    "5 Year (FVZ5)": "fvz5.csv",
-    "10 Year (TYZ5)": "tyz5.csv"
+    "2 Year (TUZ5)": "Copy of TUZ5 - 5M5D.csv",
+    "5 Year (FVZ5)": "5year.csv",
+    "10 Year (TYZ5)": "10year.csv"
 }
-
 
 # --- Sidebar selector ---
 st.sidebar.header("Select Bond Contract")
 selected_label = st.sidebar.radio("Choose maturity:", list(data_files.keys()))
 selected_path = data_files[selected_label]
 
-# ✅ Load the selected dataset
 df = load_data(selected_path)
-st.caption(f"Loaded file: {selected_path}")
-st.write("Sample data preview:")
-st.dataframe(df.head(5))
 
+if df.empty:
+    st.stop()
 
 # --- Calendar-style day selection ---
 all_days = sorted(df['Day'].unique())
 selected_days = st.sidebar.multiselect(
     "Select trading days:",
     options=all_days,
-    default=all_days[-5:]
+    default=all_days[-5:] if len(all_days) >= 5 else all_days
 )
 
 if len(selected_days) == 0:
@@ -151,9 +165,9 @@ fig.update_layout(
     margin=dict(l=40, r=40, t=70, b=60)
 )
 
-st.plotly_chart(fig, use_container_width=True)
+st.plotly_chart(fig, width='stretch')
 
 # --- Stats Table ---
 st.subheader("Daily Summary")
 summary = df_sel.groupby('Day')['Rel_Yield'].agg(['min', 'max', 'mean', 'std']).round(5)
-st.dataframe(summary, use_container_width=True)
+st.dataframe(summary, width='stretch')
