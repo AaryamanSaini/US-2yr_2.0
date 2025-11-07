@@ -4,7 +4,6 @@ import numpy as np
 import plotly.graph_objects as go
 import re
 from datetime import datetime
-import os
 
 # --- PAGE CONFIG ---
 st.set_page_config(page_title="Bond Futures Dashboard", layout="wide")
@@ -16,71 +15,38 @@ def parse_price(p):
         match = re.match(r'(\d+)-(\d+)([¼½¾]?)', p.strip())
         if match:
             whole, thirtyseconds, frac = match.groups()
-            val = int(whole) + int(thirtyseconds) / 32
-            if frac == '¼': val += 1 / 128
-            elif frac == '½': val += 1 / 64
-            elif frac == '¾': val += 3 / 128
+            val = int(whole) + int(thirtyseconds)/32
+            if frac == '¼': val += 1/128
+            elif frac == '½': val += 1/64
+            elif frac == '¾': val += 3/128
             return val
     return np.nan
 
-
-# --- Function to load and process each CSV safely ---
+# --- Function to load and process each CSV ---
 def load_data(path):
-    st.write(f"📂 Loading file: `{os.getcwd()}/{path}`")
-
-    if not os.path.exists(path):
-        st.error(f"❌ File not found: {path}")
-        return pd.DataFrame()
-
-    encodings = ['utf-8-sig', 'utf-8', 'ISO-8859-1']
-    for enc in encodings:
-        try:
-            df = pd.read_csv(path, encoding=enc, on_bad_lines='skip')
-            break
-        except Exception as e:
-            st.write(f"⚠️ Failed with {enc}: {e}")
-            continue
-
-    # Clean up columns (remove BOM, spaces)
+    df = pd.read_csv(path)
     df.columns = df.columns.str.strip()
-    if df.columns[0].startswith("ï»¿"):
-        df.rename(columns={df.columns[0]: df.columns[0].replace("ï»¿", "")}, inplace=True)
-
-    # Identify price column
-    price_col = next((c for c in df.columns if "Lst" in c or "Last" in c), None)
-    if price_col is None:
-        st.error(f"❌ Could not find price column in {path}. Columns: {list(df.columns)}")
-        return pd.DataFrame()
-
-    # Parse dates and time
-    df['Date'] = pd.to_datetime(df['Date'], errors='coerce', dayfirst=True)
+    price_col = [c for c in df.columns if "Lst" in c][0]
+    df['Date'] = pd.to_datetime(df['Date'], dayfirst=True, errors='coerce')
+    df['Price'] = df[price_col].apply(parse_price)
     df['Day'] = df['Date'].dt.date
 
-    if 'Time' in df.columns:
-        df['Time'] = df['Time'].astype(str).str.extract(r'(\d{1,2}:\d{2}(:\d{2})?)')[0]
-        df['Time'] = pd.to_datetime(df['Time'], format='%H:%M:%S', errors='coerce').dt.time
+    # Handle time safely
+    if 'Time' in df.columns and df['Time'].dtype == object:
+        df['Time'] = pd.to_datetime(df['Time'], errors='coerce').dt.time
     else:
         df['Time'] = df['Date'].dt.time
 
-    # Convert prices and compute relative yield
-    df['Price'] = df[price_col].apply(parse_price)
-    df = df.dropna(subset=['Price', 'Time']).copy()
-    df = df.sort_values(by=['Day', 'Time'])
-
+    df = df.dropna(subset=['Time'])
     df['Rel_Yield'] = df.groupby('Day')['Price'].transform(lambda x: x - x.iloc[0])
-
-    # Quick preview to confirm loading
-    with st.sidebar.expander(f"Preview: {os.path.basename(path)}", expanded=False):
-        st.dataframe(df.head(5), width='stretch')
-
+    df = df.drop_duplicates(subset=['Day', 'Time'], keep='last')
     return df
-
 
 # --- Load datasets ---
 data_files = {
-    "2 Year (TUZ5)": "Copy of TUZ5 - 5M5D.csv",
-    "5 Year (FVZ5)": "5year.csv",
-    "10 Year (TYZ5)": "10year.csv"
+    "2 Year (TUZ5)": "tuz5.csv",
+    "5 Year (FVZ5)": "fvz5.csv",
+    "10 Year (TYZ5)": "tyz5.csv"
 }
 
 # --- Sidebar selector ---
@@ -90,15 +56,12 @@ selected_path = data_files[selected_label]
 
 df = load_data(selected_path)
 
-if df.empty:
-    st.stop()
-
 # --- Calendar-style day selection ---
 all_days = sorted(df['Day'].unique())
 selected_days = st.sidebar.multiselect(
     "Select trading days:",
     options=all_days,
-    default=all_days[-5:] if len(all_days) >= 5 else all_days
+    default=all_days[-5:]
 )
 
 if len(selected_days) == 0:
@@ -165,9 +128,9 @@ fig.update_layout(
     margin=dict(l=40, r=40, t=70, b=60)
 )
 
-st.plotly_chart(fig, width='stretch')
+st.plotly_chart(fig, use_container_width=True)
 
 # --- Stats Table ---
 st.subheader("Daily Summary")
 summary = df_sel.groupby('Day')['Rel_Yield'].agg(['min', 'max', 'mean', 'std']).round(5)
-st.dataframe(summary, width='stretch')
+st.dataframe(summary, use_container_width=True)
